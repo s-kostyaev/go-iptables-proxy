@@ -37,7 +37,6 @@ func (proxy *Proxy) Enable() error {
 		"--dport", fmt.Sprint(proxy.Source.Port),
 		"-j", "DNAT", "--to",
 		fmt.Sprintf("%s:%d", proxy.Dest.IP, proxy.Dest.Port))
-	cmd.Stdin = strings.NewReader("")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -57,7 +56,14 @@ func (proxy *Proxy) Enable() error {
 	return nil
 }
 
-func (proxy *Proxy) Disable() error {
+func (proxy *Proxy) Disable() {
+	err := proxy.disable()
+	for err != nil {
+		err = proxy.disable()
+	}
+}
+
+func (proxy *Proxy) disable() error {
 	if !proxy.Enabled {
 		return nil
 	}
@@ -66,7 +72,6 @@ func (proxy *Proxy) Disable() error {
 		"-d", proxy.Source.IP, "--dport", fmt.Sprint(proxy.Source.Port),
 		"-j", "DNAT", "--to",
 		fmt.Sprintf("%s:%d", proxy.Dest.IP, proxy.Dest.Port))
-	cmd.Stdin = strings.NewReader("")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
