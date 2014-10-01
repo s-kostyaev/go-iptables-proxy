@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
 type Proxy struct {
-	Source  Node
-	Dest    Node
-	Enabled bool
+	Source Node
+	Dest   Node
 }
 
 type Node struct {
@@ -28,17 +28,12 @@ func NewProxy(sourceIP string, sourcePort int,
 	return &proxy
 }
 
-func (proxy *Proxy) Enable() error {
-	if proxy.Enabled {
-		return nil
-	}
+func (proxy Proxy) EnableRedirect() error {
 	cmd := exec.Command("iptables", "-t", "nat", "-A", "PREROUTING",
 		"-p", "tcp", "-d", proxy.Source.IP,
 		"--dport", fmt.Sprint(proxy.Source.Port),
 		"-j", "DNAT", "--to",
 		fmt.Sprintf("%s:%d", proxy.Dest.IP, proxy.Dest.Port))
-	var out bytes.Buffer
-	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
 		return err
@@ -47,38 +42,61 @@ func (proxy *Proxy) Enable() error {
 		"-p", "tcp", "--dport",
 		fmt.Sprint(proxy.Dest.Port), "-j", "ACCEPT")
 	cmd.Stdin = strings.NewReader("")
-	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
 		return err
 	}
-	proxy.Enabled = true
 	return nil
 }
 
-func (proxy *Proxy) Disable() {
-	err := proxy.disable()
-	for err != nil {
-		err = proxy.disable()
-	}
-}
-
-func (proxy *Proxy) disable() error {
-	if !proxy.Enabled {
-		return nil
-	}
-	cmd := exec.Command("iptables", "-t", "nat", "-D",
-		"PREROUTING", "-p", "tcp",
-		"-d", proxy.Source.IP, "--dport", fmt.Sprint(proxy.Source.Port),
+func (proxy Proxy) DisableRedirect() error {
+	cmd := exec.Command("iptables", "-t", "nat", "-D", "PREROUTING",
+		"-p", "tcp", "-d", proxy.Source.IP,
+		"--dport", fmt.Sprint(proxy.Source.Port),
 		"-j", "DNAT", "--to",
 		fmt.Sprintf("%s:%d", proxy.Dest.IP, proxy.Dest.Port))
-	var out bytes.Buffer
-	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
 		return err
 	}
-	proxy.Enabled = false
 	return nil
+}
 
+func GetEnabledProxies() ([]Proxy, error) {
+	proxies := []Proxy{}
+	cmd := exec.Command("iptables", "-t", "nat", "-L", "PREROUTING")
+	cmd.Stdout = &bytes.Buffer{}
+	err := cmd.Run()
+	if err != nil {
+		return proxies, err
+	}
+	raw := strings.Split(strings.Trim(
+		cmd.Stdout.(*bytes.Buffer).String(), "\n"), "\n")[2:]
+	for _, str := range raw {
+		tmp := strings.Fields(str)
+		if tmp[0] != "DNAT" {
+			continue
+		}
+		if tmp[1] != "tcp" {
+			continue
+		}
+		sourcePort := 0
+		sPort := strings.Split(tmp[6], ":")[1]
+		if sPort == "http" {
+			sourcePort = 80
+		} else {
+			sourcePort, err = strconv.Atoi(sPort)
+			if err != nil {
+				continue
+			}
+		}
+		dst := strings.Split(tmp[7], ":")
+		dPort, err := strconv.Atoi(dst[2])
+		if err != nil {
+			continue
+		}
+		proxies = append(proxies, *NewProxy(
+			tmp[4], sourcePort, dst[1], dPort))
+	}
+	return proxies, nil
 }
