@@ -25,7 +25,7 @@ type Node struct {
 func NewProxy(sourceIP string, sourcePort int,
 	destIP string, destPort int, comment string,
 ) *Proxy {
-	var proxy Proxy
+	proxy := Proxy{}
 	proxy.Source.IP = sourceIP
 	proxy.Source.Port = sourcePort
 	proxy.Dest.IP = destIP
