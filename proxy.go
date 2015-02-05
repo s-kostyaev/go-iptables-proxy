@@ -15,6 +15,7 @@ type Proxy struct {
 	Source  Node
 	Dest    Node
 	Comment string
+	Snat    bool
 }
 
 type Node struct {
@@ -23,7 +24,7 @@ type Node struct {
 }
 
 func NewProxy(sourceIP string, sourcePort int,
-	destIP string, destPort int, comment string,
+	destIP string, destPort int, comment string, snat bool,
 ) *Proxy {
 	proxy := Proxy{}
 	proxy.Source.IP = sourceIP
@@ -31,6 +32,7 @@ func NewProxy(sourceIP string, sourcePort int,
 	proxy.Dest.IP = destIP
 	proxy.Dest.Port = destPort
 	proxy.Comment = comment
+	proxy.Snat = snat
 	return &proxy
 }
 
@@ -46,6 +48,32 @@ func (proxy Proxy) EnableForwarding() error {
 	if err != nil {
 		return err
 	}
+	cmd = exec.Command("iptables", "-t", "nat", "-A", "OUTPUT",
+		"-p", "tcp", "-d", proxy.Source.IP,
+		"--dport", fmt.Sprint(proxy.Source.Port),
+		"-j", "DNAT", "--to",
+		fmt.Sprintf("%s:%d", proxy.Dest.IP, proxy.Dest.Port),
+		"-m", "comment", "--comment", proxy.Comment,
+	)
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	if proxy.Snat {
+		cmd = exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING",
+			"-p", "tcp", "-d", proxy.Dest.IP,
+			"--dport", fmt.Sprint(proxy.Dest.Port),
+			"-j", "SNAT", "--to",
+			fmt.Sprintf("%s:%d", proxy.Source.IP, proxy.Source.Port),
+			"-m", "comment", "--comment", proxy.Comment,
+		)
+		err = cmd.Run()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -60,6 +88,31 @@ func (proxy Proxy) DisableForwarding() error {
 	err := cmd.Run()
 	if err != nil {
 		return err
+	}
+	cmd = exec.Command("iptables", "-t", "nat", "-D", "OUTPUT",
+		"-p", "tcp", "-d", proxy.Source.IP,
+		"--dport", fmt.Sprint(proxy.Source.Port),
+		"-j", "DNAT", "--to",
+		fmt.Sprintf("%s:%d", proxy.Dest.IP, proxy.Dest.Port),
+		"-m", "comment", "--comment", proxy.Comment,
+	)
+	err = cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	if proxy.Snat {
+		cmd = exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
+			"-p", "tcp", "-d", proxy.Dest.IP,
+			"--dport", fmt.Sprint(proxy.Dest.Port),
+			"-j", "SNAT", "--to",
+			fmt.Sprintf("%s:%d", proxy.Source.IP, proxy.Source.Port),
+			"-m", "comment", "--comment", proxy.Comment,
+		)
+		err = cmd.Run()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -99,8 +152,23 @@ func GetEnabledProxies() ([]Proxy, error) {
 			continue
 		}
 		result = append(result, *NewProxy(
-			tmp[4], sourcePort, dst[1], dPort, com))
+			tmp[4], sourcePort, dst[1], dPort, com, false))
 	}
+	for _, proxy := range result {
+		cmd = exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING",
+			"-p", "tcp", "-d", proxy.Dest.IP,
+			"--dport", fmt.Sprint(proxy.Dest.Port),
+			"-j", "SNAT", "--to",
+			fmt.Sprintf("%s:%d", proxy.Source.IP, proxy.Source.Port),
+			"-m", "comment", "--comment", proxy.Comment,
+		)
+		err = cmd.Run()
+		if err == nil {
+			proxy.Snat = true
+		}
+
+	}
+
 	return result, nil
 }
 
